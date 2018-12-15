@@ -2,6 +2,8 @@
 
 A Web Extension that smoothes element appear/disappear/move — a neat effect (when it works).
 
+A lot of things were not designed to not happen immediately, so may transition strangely.
+
 # Installation
 
 Temporary, alpha-version, ⴻ.

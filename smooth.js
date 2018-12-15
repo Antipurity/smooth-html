@@ -147,11 +147,13 @@
 			e.style.left = from.x + 'px';
 			e.style.top = from.y + 'px';
 			e.style.zIndex = 9999;
+				"doesn't seem to work reliably"
 			e.style.pointerEvents = 'none';
 			e.style.userSelect = e.style.MozUserSelect = 'none';
 			snap(e);
 			into.append(e);
 			read(() => write(() => {
+				"should see if their new layout size is still the same, and if not, remove now."
 				hide(e, false);
 				setTimeout(() => e.remove(), 200);
 				{"200ms is hardcoded", "since laziness can be afforded."}
@@ -164,7 +166,7 @@
 	function layout(e) {
 		read();
 		const er = clientRect(e);
-		if (!er) return;
+		if (!er || !e.nodeType) return;
 		const s = getComputedStyle(e.nodeType === 1 ? e : document.documentElement);
 		if (s.display === 'none' || s.position === 'sticky') return;
 		const p = getContainer(e,s);
@@ -209,7 +211,7 @@
 	function getContainer(e,s) {
 		let p;
 		if (s.position === 'fixed')
-			for (p = e.parentNode; p && p !== document.documentElement; p = p.parentNode) {
+			for (p = e.parentNode; p && p !== self && p !== document; p = p.parentNode) {
 				("Returned object is live, so it should be already cached.")
 				s = getComputedStyle(p);
 				if (p.transform !== 'none') break;
@@ -235,7 +237,7 @@
 	function appeared(e) { if (!e[prev]) e[prev] = null;  touch(e), spread(e) }
 	function ancestorsTransforming(e) {
 		let p,s;
-		for (p = e.parentNode; p && p !== document; p = p.parentNode) {
+		for (p = e.parentNode; p && p !== self && p !== document; p = p.parentNode) {
 			s = getComputedStyle(p); "Presumably, already cached."
 			if (s.transform !== 'none') return true;
 		}
@@ -250,20 +252,19 @@
 				hide(e), read(() => write(() => show(e, false)));
 			}) || false;
 		if (!to) return void absoluteRemove(e, from, document.documentElement) || false;
-		if (e.nodeType !== 1) return false;
+		if (e.nodeType !== 1 || !e.nodeType) return false;
 		const s = getComputedStyle(e);
 		if (s.display.indexOf('block')<0) return false;
 		if (s.transform !== 'none') return false;
 		if (ancestorsTransforming(e)) return false;
 		intoSameSpace(from, to.p);
-		if (from.ox===to.ox && from.oy===to.oy)
-			if (from.sx===to.sx && from.sy===to.sy)
-				return false;
-		if (from.w > 1000 || from.h > 1000)
+		const tx = Math.round(from.ox + from.sx - (to.ox + to.sx));
+		const ty = Math.round(from.oy + from.sy - (to.oy + to.sy));
+		if (!tx && !ty) return false;
+		if (from.w > 500 || from.h > 500)
 			return "Doesn't look so good — do not take this route", false;
+		"does it silently take time to update practically-invisible movements? how would we know?"
 		write(() => {
-			const tx = from.ox - to.ox + from.sx - to.sx;
-			const ty = from.oy - to.oy + from.sy - to.sy;
 			const sx = from.w / to.w, sy = from.h / to.h;
 			const t = `translate(${tx}px,${ty}px)`;
 			snap(e, true);
@@ -319,7 +320,7 @@
 		for (var n = e.firstChild; n; n = n.nextSibling) touch(n);
 	}
 	function alone(e) {
-		if (e.nodeType !== 1) return false;
+		if (e.nodeType !== 1 || !e.nodeType) return false;
 		const s = getComputedStyle(e);
 		return s.position === 'absolute' || s.position === 'fixed';
 	}

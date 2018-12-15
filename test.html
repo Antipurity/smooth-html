@@ -1,0 +1,54 @@
+<!DOCTYPE html><head>
+	<meta charset=utf-8><meta name=referrer content='no-referrer'>
+	<!-- A simple document for testing some animations/smoothed-HTML-state-transitions. -->
+	<title>Animations test  </title>
+	<style>
+		* { border-radius:.3em; box-sizing:border-box }
+		:focus { outline:none; box-shadow:0 0 .1em .15em darkblue }
+		button { padding:.5em }
+		container { display:block; border:1px solid black; text-align:center }
+		item {
+			background-color:darkslateblue;
+			display:inline-block;
+			width:100px; height:35px;
+			text-align:center;
+		}
+
+		.ⴻvoid { opacity: 0 !important;  filter: blur(2px);  visibility: hidden }
+	</style>
+	<script>
+		setTimeout(()=>document.body.classList.remove('ⴻvoid'), 100);
+
+		const random = Math.random, floor = Math.floor;
+		function add(p, ch) {
+			if (p.childNodes.length + 1 <= 1 / random()) p.append(ch);
+			else child(p).before(ch);
+		}
+		function remove(p) {
+			const ch = child(p);
+			if (ch) ch.remove();
+		}
+		function child(p) {
+			return p.childNodes[floor(random() * p.childNodes.length)];
+		}
+		function item(txt) {
+			const e = document.createElement('item');
+			e.textContent = txt;
+			return e;
+		}
+	</script>
+</head>
+<body class=ⴻvoid style='text-align:center; font-family:sans-serif'>
+	<button onclick="for(let i=0;i<2;++i) add(addRemove, item('Item ' + i))">Add 2 items</button>
+	<button onclick="for(let i=0;i<3;++i) add(addRemove, 'Some long text #' + i)">Add 3 texts</button>
+	<button onclick="for(let i=0;i<3;++i) remove(addRemove)">Remove 3 children</button>
+	<container id=addRemove></container>
+	<br><br><br>
+	<p>Block elements animate appear/move/disappear.</p>
+	<p>Inline elements (like text nodes) only animate disappear.
+	<!-- CSS transform only affects block elements; making inline ones position:relative and animating left/top ourselves (since those do not transition) is too much work (and potentially laggy). -->
+	<!-- Also, the potentially-script-affecting surface (element.style.transform) is minimal this way. -->
+	</p>
+	<p>With a page's explicit cooperation, document.body animates appear.</p>
+	<p>(Without the smoothing extension active, nothing should be animated.)</p>
+</body>

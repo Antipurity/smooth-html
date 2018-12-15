@@ -119,7 +119,7 @@
 		read();
 		if (e.parentNode) return;
 		if (!e || !from || !from.p) return;
-		const oldL = from.p[prev] || layout(from.p);
+		const oldPL = from.p[prev] || layout(from.p);
 		intoSameSpace(from, into);
 		e = e.cloneNode(true);
 		write(() => {try{
@@ -131,8 +131,8 @@
 			}
 			if (from.ix !== null) {
 				const p = document.createElement('div');
-				p.style.width = oldL.cw + 'px';
-				p.style.height = oldL.ch + 'px';
+				p.style.width = oldPL.cw + 'px';
+				p.style.height = oldPL.ch + 'px';
 				const sp = document.createElement('span');
 				sp.style.display = 'inline-block';
 				sp.style.width = (from.ix - from.x) + 'px';
@@ -146,18 +146,25 @@
 			e.style.margin = 0;
 			e.style.left = from.x + 'px';
 			e.style.top = from.y + 'px';
+			e.style.width = from.w + 'px';
+			e.style.height = from.h + 'px';
 			e.style.zIndex = 9999;
 				"doesn't seem to work reliably"
 			e.style.pointerEvents = 'none';
 			e.style.userSelect = e.style.MozUserSelect = 'none';
 			snap(e);
 			into.append(e);
-			read(() => write(() => {
-				"should see if their new layout size is still the same, and if not, remove now."
-				hide(e, false);
-				setTimeout(() => e.remove(), 200);
-				{"200ms is hardcoded", "since laziness can be afforded."}
-			}));
+			read(() => {
+				const to = layout(e);
+				if (Math.round(from.w)!==Math.round(to.w) || Math.round(from.h)!==Math.round(to.h))
+					write(() => e.remove());
+				else
+					write(() => {
+						hide(e, false);
+						setTimeout(() => e.remove(), 200);
+						{"200ms is hardcoded", "since laziness can be afforded."}
+					})
+			});
 		}catch(err){log(err)}});
 	}
 
@@ -260,6 +267,8 @@
 		intoSameSpace(from, to.p);
 		const tx = Math.round(from.ox + from.sx - (to.ox + to.sx));
 		const ty = Math.round(from.oy + from.sy - (to.oy + to.sy));
+		"sometimes, seems to be off (on the scale of about 8px — varies) — why?"
+			"calculations seem to be not entirely correct…"
 		if (!tx && !ty) return false;
 		if (from.w > 500 || from.h > 500)
 			return "Doesn't look so good — do not take this route", false;

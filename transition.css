@@ -1,3 +1,3 @@
-:not(input):not(button) { transition: all .2s }
-.ⴻvoid { opacity: 0 !important;  filter: blur(2px);  visibility: hidden }
+:not(input):not(button) { transition: all .2s ease-out }
+.ⴻvoid { opacity: 0 !important;  visibility: hidden }
 .ⴻsnap { transition: none !important }

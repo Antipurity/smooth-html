@@ -1,9 +1,23 @@
 {
 	"manifest_version": 2,
-	"name": "Animated HTML",
-	"version": "0",
 	"permissions": [ "<all_urls>" ],
+	"author": "Antipurity",
 	"content_scripts": [
-		{"matches": ["<all_urls>"], "all_frames":true, "js":["smooth.js"], "css":["transition.css"]}
-	]
+		{
+			"matches": ["<all_urls>"],
+			"all_frames":true,
+			"js":["smooth.js"],
+			"css":["transition.css"]
+		}
+	],
+	"description": "Smoothes HTML layout transitions.",
+	"homepage_url": "https://github.com/Antipurity/smooth-html/tree/master",
+	"icons": {
+		"32": "icon32.png",
+		"48": "icon48.png",
+		"96": "icon96.png"
+	},
+	"name": "Smooth layout changes",
+	"short_name": "Smooth",
+	"version": "0"
 }

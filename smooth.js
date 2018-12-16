@@ -1,10 +1,11 @@
 (function() {try{
-	"Allocates memory hideously.";
-	"Fade-out clones elements, so matching CSS rules may change (if they depended on their still-alive parents), and removed elements may look different before they disappear.";
+	"Allocates memory hideously.", "Uses maps where properties would have sufficed.";
 
-	"Page code using element.className (and not .classList), or reading all classes, may break.",
+	"May break, in pages:"
 	"Page code reading children of document.documentElement may break (that is where clones of removed nodes get put to die neatly)."
-	"Page code manipulating element.style.transform might break (it is used for position transitions).";
+	"Page code reading element.className (and not .classList) might break.",
+	"Page code reading element.style.transform might break (it is used for position transitions).";
+	"Fade-out clones elements, so matching CSS rules may change (if they depended on their still-alive parents), and removed elements may look different before they disappear.";
 
 	if (typeof self === ''+void 0) return;
 	const log = console.log;
@@ -21,8 +22,11 @@
 		return console.info('Browser does not support performance — cannot smooth');
 	const nextFrame = self.requestAnimationFrame.bind(self);
 	const now = self.performance.now.bind(self.performance);
-	const dirty = new Set, shiny = new Set;
-	let scheduled = false, start, cur, len;
+	const dur = 200|("ms is hardcoded", "since laziness can be afforded.");
+	const locks = new Map;
+	const dirty = new Map, shiny = new Set;
+	let scheduled = false, start, cur, len, touchNumber = 0;
+	setInterval(() => { 0 && log('touched:', touchNumber), touchNumber = 0 }, 1000);
 
 
 
@@ -54,19 +58,12 @@
 		addEventListener('resize', () => read(() => touch(document.body)), many);
 		addEventListener('transitionstart', evt => evt.target && read(() => touch(evt.target)), many);
 		addEventListener('transitionend', evt => evt.target && read(() => look(evt.target)), many);
-		if (!self.PointerEvent)
-			addEventListener('mousemove', point, many);
-		else
-			addEventListener('pointermove', point, many);
-		let lastPoint = now();
-		function point(evt) {
-			if (now() - lastPoint < 300) return;
-			lastPoint = now();
-			evt.target && read(() => {
-				touch(evt.target);
-				anchor(evt.target);
-			});
+		addEventListener(self.PointerEvent ? 'pointerenter' : 'mouseenter', enter, many);
+		let id = null;
+		function enter(evt) {
+			clearTimeout(id), id = evt.target ? setTimeout(point, 300, evt.target) : null;
 		}
+		function point(e) { id = null, read(() => { touch(e), anchor(e) }) }
 	}
 	function on(a) {
 		read(() => {
@@ -75,8 +72,26 @@
 				for (i=0; i < a.length; ++i) {
 					touch(a[i].target), neighbors(a[i]);
 					if (a[i].type === 'childList') {
-						a[i].addedNodes.forEach(appeared);
-						a[i].removedNodes.forEach(moved);
+						const x = a[i].addedNodes, y = a[i].removedNodes;
+						if (!x.length && y.length===1 && y[0].nodeType!==1) {
+							const z = a[i+1] && a[i+1].type === 'childList' && a[i+1].addedNodes;
+							if (z && a[i+1].target===a[i].target && z.length===1 && z[0].nodeType!==1) {
+								~~"Likely setting .textContent (very common) — do not animate."
+								z[0][prev] = y[0][prev];
+								continue;
+							}
+						}
+						if (!y.length && x.length===1 && x[0].nodeType!==1) {
+							const z = a[i+1] && a[i+1].type === 'childList' && a[i+1].removedNodes;
+							if (z && a[i+1].target===a[i].target && z.length===1 && z[0].nodeType!==1) {
+								("Does not seem to trigger in Firefox, but is left just in case.")
+								x[0][prev] = z[0][prev];
+								continue;
+							}
+						}
+						"Those before do not catch all .textContent sets, but most, so good enough."
+						x.forEach(appeared);
+						y.forEach(moved);
 					}
 				}
 			}catch(err){log(err)}
@@ -106,6 +121,8 @@
 		if (e.nodeType !== 1) return;
 		snap(e, false);
 		if (!imm && e.tagName === 'IMG' && e.complete && e.naturalWidth === 0) {
+			"Images do not seem to ever fade in… Maybe later."
+				"Should we, on insert, search the whole subtree for images?"
 			const id = setTimeout(e => write(() => show(e)), 1000, e);
 			e.addEventListener('load', () => { clearTimeout(id), write(() => show(e)) }, once);
 		} else unclass(e, 'ⴻvoid');
@@ -129,7 +146,7 @@
 				p.appendChild(e);
 				e = p;
 			}
-			if (from.ix !== null) {
+			if (from.ix !== null && oldPL) {
 				const p = document.createElement('div');
 				p.style.width = oldPL.cw + 'px';
 				p.style.height = oldPL.ch + 'px';
@@ -149,23 +166,62 @@
 			e.style.width = from.w + 'px';
 			e.style.height = from.h + 'px';
 			e.style.zIndex = 9999;
-				"doesn't seem to work reliably"
+			e.style.overflow = 'hidden';
 			e.style.pointerEvents = 'none';
 			e.style.userSelect = e.style.MozUserSelect = 'none';
 			snap(e);
 			into.append(e);
 			read(() => {
 				const to = layout(e);
-				if (Math.round(from.w)!==Math.round(to.w) || Math.round(from.h)!==Math.round(to.h))
+				if (Math.round(from.cw - to.cw)!==0 || Math.round(from.ch - to.ch)!==0)
 					write(() => e.remove());
 				else
 					write(() => {
 						hide(e, false);
-						setTimeout(() => e.remove(), 200);
-						{"200ms is hardcoded", "since laziness can be afforded."}
+						ontransitionendHasNotProvenSteadfast => 'easier to not trust';
+						setTimeout(() => write(() => e.remove()), dur);
 					})
 			});
 		}catch(err){log(err)}});
+	}
+
+
+
+	function lock(e) {
+		`Fail if e or its parents or children were locked.`
+		"(In other words, if any ancestors were locked directly, or if e was locked in/directly.)"
+			"(here, locks.get(e) is: >0 — indirect, <0 — direct, void — neither.)"
+		if (locks.has(e)) return false;
+		let p;
+		for (p = e.parentNode; p && p !== self && p !== document; p = p.parentNode)
+			if (locks.get(p) < 0) return false;
+		const a = [];
+		for (p = e; p && p !== self && p !== document; p = p.parentNode)
+			a.push(p);
+		if (!a.length) return false;
+		lockArr(e, a), setTimeout(unlockArr, dur, e, a);
+		return true;
+	}
+	function lockArr(e,a) {
+		let i;
+		for (i = 0; i < a.length; ++i)
+			if (!locks.has(a[i])) locks.set(a[i], 1);
+			else if (locks.get(a[i]) > 0) locks.set(a[i], locks.get(a[i]) + 1);
+			else if (locks.get(a[i]) < 0) locks.set(a[i], locks.get(a[i]) - 1);
+			else throw log(a[i]), "Zero-locks detected (should be not in the map at all)";
+		if (!locks.has(e)) throw "a does not contain e";
+		if (locks.get(e)<0) throw "Directly locked twice";
+		locks.set(e, -locks.get(e));
+	}
+	function unlockArr(e,a) {
+		let i;
+		for (i = 0; i < a.length; ++i)
+			if (locks.get(a[i]) > 1) locks.set(a[i], locks.get(a[i]) - 1);
+			else if (locks.get(a[i]) < -1) locks.set(a[i], locks.get(a[i]) + 1);
+			else locks.delete(a[i]);
+		if (!locks.has(e)) throw "a does not contain e";
+		if (locks.get(e)>0) throw "Directly unlocked what has not been directly locked";
+		locks.set(e, -locks.get(e));
 	}
 
 
@@ -219,7 +275,7 @@
 		let p;
 		if (s.position === 'fixed')
 			for (p = e.parentNode; p && p !== self && p !== document; p = p.parentNode) {
-				("Returned object is live, so it should be already cached.")
+				("Returned style object is live, so it should be already cached.")
 				s = getComputedStyle(p);
 				if (p.transform !== 'none') break;
 				if (p.perspective !== 'none') break;
@@ -241,51 +297,69 @@
 		l.p = as;
 		return l;
 	}
-	function appeared(e) { if (!e[prev]) e[prev] = null;  touch(e), spread(e) }
-	function ancestorsTransforming(e) {
-		let p,s;
-		for (p = e.parentNode; p && p !== self && p !== document; p = p.parentNode) {
-			s = getComputedStyle(p); "Presumably, already cached."
-			if (s.transform !== 'none') return true;
-		}
-	}
+	function appeared(e) { if (!e[prev]) e[prev] = null;  look(e), touch(e), spread(e) }
 	function moved(e) {
 		read();
-		const from = e[prev], to = e[prev] = layout(e);
 		if (e === document.body) return spread(e), false;
-		if (from === void 0) return false;
-		if (!from)
-			return void write(() => {
-				hide(e), read(() => write(() => show(e, false)));
-			}) || false;
-		if (!to) return void absoluteRemove(e, from, document.documentElement) || false;
+		const from = e[prev], to = look(e) || from && void 0;
+		if (!from || !to) return;
+
 		if (e.nodeType !== 1 || !e.nodeType) return false;
 		const s = getComputedStyle(e);
 		if (s.display.indexOf('block')<0) return false;
 		if (s.transform !== 'none') return false;
-		if (ancestorsTransforming(e)) return false;
 		intoSameSpace(from, to.p);
-		const tx = Math.round(from.ox + from.sx - (to.ox + to.sx));
-		const ty = Math.round(from.oy + from.sy - (to.oy + to.sy));
-		"sometimes, seems to be off (on the scale of about 8px — varies) — why?"
-			"calculations seem to be not entirely correct…"
-		if (!tx && !ty) return false;
-		if (from.w > 500 || from.h > 500)
+		const sx = from.w / to.w, sy = from.h / to.h;
+		const dx = from.ox - to.ox, dy = from.oy - to.oy;
+		const scaled = isFinite(sx) && isFinite(sy) && (sx !== 1 || sy !== 1);
+		if (!dx && !dy && !scaled) return false;
+		if (Math.abs(from.w - to.w) > 1000 || Math.abs(from.h - to.h) > 1000)
 			return "Doesn't look so good — do not take this route", false;
-		"does it silently take time to update practically-invisible movements? how would we know?"
+		if (!lock(e)) return;
+
 		write(() => {
-			const sx = from.w / to.w, sy = from.h / to.h;
-			const t = `translate(${tx}px,${ty}px)`;
 			snap(e, true);
-			if (isFinite(sx) && isFinite(sy) && (sx !== 1 || sy !== 1))
-				e.style.transform = `${t} scale(${sx},${sy})`;
+			if (scaled)
+				e.style.transform = `translate(${dx + to.sx * (sx-1)}px,${dy + to.sy * (sy-1)}px) scale(${sx},${sy})`;
 			else
-				e.style.transform = t;
+				e.style.transform = `translate(${dx}px,${dy}px)`;
 			read(() => write(() => {
 				snap(e, false), removeProperty(e, 'transform');
 			}));
 		});
 		return true;
+	}
+
+
+
+	function showBox(e, color = 'red') {
+		const l = layout(e);
+		box(l.p, l.x, l.y, l.w, l.h, color);
+	}
+	function box(p, x,y,w,h, color = 'red') {
+		"For debugging, to show the from/to boxes, to ensure that transforms are like foxes."
+		try{
+			const from = { p,x,y,w,h, ix:null }
+			intoSameSpace(from, document.documentElement);
+			write(() => {
+				const e = document.createElement('div');
+				e.style.position = 'absolute';
+				e.style.border = '3px solid ' + color;
+				e.style.left = from.x + 'px';
+				e.style.top = from.y + 'px';
+				e.style.width = from.w + 'px';
+				e.style.height = from.h + 'px';
+				e.style.zIndex = 99999;
+				e.style.pointerEvents = 'none';
+				document.documentElement.append(e);
+				read(() => {
+					write(() => {
+						hide(e, false);
+						setTimeout(() => e.remove(), dur);
+					});
+				});
+			});
+		}catch(err){log(err)}
 	}
 
 
@@ -316,30 +390,40 @@
 
 
 
-	function look(e) { if (e) e[prev] = layout(e) }
-	function touch(e) {
+	function look(e) {
+		if (!e) return;
+		const from = e[prev], to = e[prev] = layout(e);
+		if (from === void 0) return;
+		if (!from)
+			return void write(() => {
+				hide(e), read(() => write(() => show(e, false)));
+			});
+		if (!to) return void absoluteRemove(e, from, document.documentElement);
+		return to;
+	}
+	function touch(e, time = now()) {
 		if (!e || dirty.has(e) || shiny.has(e)) return;
 		if (e === document.documentElement) return;
-		dirty.add(e);
+		dirty.set(e, time);
 		if (!scheduled) read(clean), scheduled = true;
 	}
-	function spread(e) {
-		neighbors(e);
-		touch(e.parentNode);
-		for (var n = e.firstChild; n; n = n.nextSibling) touch(n);
+	function spread(e, time = now()) {
+		neighbors(e, time);
+		touch(e.parentNode, time);
+		for (var n = e.firstChild; n; n = n.nextSibling) touch(n, time);
 	}
 	function alone(e) {
 		if (e.nodeType !== 1 || !e.nodeType) return false;
-		const s = getComputedStyle(e);
+		const s = getComputedStyle(e); 'Presumably already cached.'
 		return s.position === 'absolute' || s.position === 'fixed';
 	}
-	function neighbors(e) {
+	function neighbors(e, time = now()) {
 		if (alone(e)) return;
 		let n;
 		for (n = e.previousSibling; n && alone(n); n = n.previousSibling);
-		touch(n);
+		touch(n, time);
 		for (n = e.nextSibling; n && alone(n); n = n.nextSibling);
-		touch(n);
+		touch(n, time);
 	}
 	function clean() {
 		read();
@@ -358,13 +442,17 @@
 		if (r.left >= innerWidth || r.top >= innerHeight) return true;
 		return false;
 	}
-	function cleanOne(n) {
+	function cleanOne(time, n) {
 		dirty.delete(n);
-		{"Prioritize on-screen by skipping 30% off-screen."}
-		if (cur++ < len && now() - start < 3 && offscreen(n))
-			dirty.add(n);
+		{"Prioritize on-screen by skipping 30% off-screen.",
+			"Those that took too long to process, free^n."}
+		++touchNumber;
+		if (now() - time > 30 | 'ms')
+			look(n), shiny.add(n);
+		else if (cur++ < len && now() - start < 3 && offscreen(n))
+			dirty.set(n, time);
 		else
-			moved(n) ? (dirty.add(n), spread(n)) : shiny.add(n);
+			moved(n) ? (dirty.set(n, time), spread(n, time)) : shiny.add(n);
 		if (now() - start > (10^'ms')) throw null;
 	}
 

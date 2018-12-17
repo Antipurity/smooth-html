@@ -25,8 +25,9 @@
 	const dur = 200|("ms is hardcoded", "since laziness can be afforded.");
 	const locks = new Map;
 	const dirty = new Map, shiny = new Set;
+	const imageShowIds = new Map;
 	let scheduled = false, start, cur, len, touchNumber = 0;
-	setInterval(() => { 0 && log('touched:', touchNumber), touchNumber = 0 }, 1000);
+	setInterval(() => { 0 && touchNumber && log('touched:', touchNumber), touchNumber = 0 }, 1000);
 
 
 
@@ -41,8 +42,7 @@
 			childList:true,
 			subtree:true,
 		});
-		for (let e of document.getElementsByTagName('IMG'))
-			write(() => { hide(e), show(e, false) });
+		seekImages(document.body);
 
 		read(() => {
 			{"Including this script and transition.css in a page directly, and having <body class=ⴻvoid>, will make it fade in."}
@@ -50,7 +50,7 @@
 					"css, .ⴻvoid  {  opacity: 0;  filter: blur(2px);  visibility: hidden  }",
 					"js, `setTimeout(()=>document.body.classList.remove('ⴻvoid'), 100)` or the like.")
 			if (document.body.classList.contains('ⴻvoid'))
-				write(() => show(document.body, false));
+				write(() => show(document.body));
 			else if ("scripts didn't inject so late")
 				"document.body would have faded in great";
 		});
@@ -63,7 +63,12 @@
 		function enter(evt) {
 			clearTimeout(id), id = evt.target ? setTimeout(point, 300, evt.target) : null;
 		}
-		function point(e) { id = null, read(() => { touch(e), anchor(e) }) }
+		function point(e) {
+			id = null, read(() => {
+				anchor(e);
+				for (p = e; p && p !== self && p !== document; p = p.parentNode) look(p);
+			});
+		}
 	}
 	function on(a) {
 		read(() => {
@@ -96,6 +101,7 @@
 				}
 			}catch(err){log(err)}
 		});
+		finish();
 	}
 	function removeProperty(e, prop) {
 		write();
@@ -116,16 +122,11 @@
 		snap(e, imm);
 		e.classList.add('ⴻvoid');
 	}
-	function show(e, imm = true) {
+	function show(e) {
 		write();
 		if (e.nodeType !== 1) return;
 		snap(e, false);
-		if (!imm && e.tagName === 'IMG' && e.complete && e.naturalWidth === 0) {
-			"Images do not seem to ever fade in… Maybe later."
-				"Should we, on insert, search the whole subtree for images?"
-			const id = setTimeout(e => write(() => show(e)), 1000, e);
-			e.addEventListener('load', () => { clearTimeout(id), write(() => show(e)) }, once);
-		} else unclass(e, 'ⴻvoid');
+		unclass(e, 'ⴻvoid');
 	}
 	function snap(e, to = true) {
 		write();
@@ -135,7 +136,7 @@
 	function absoluteRemove(e, from, into) {
 		read();
 		if (e.parentNode) return;
-		if (!e || !from || !from.p) return;
+		if (!e || !from || !from.p || !from.a) return;
 		const oldPL = from.p[prev] || layout(from.p);
 		intoSameSpace(from, into);
 		e = e.cloneNode(true);
@@ -161,13 +162,12 @@
 			e.style.display = 'block';
 			e.style.position = 'absolute';
 			e.style.margin = 0;
-			e.style.left = from.x + 'px';
-			e.style.top = from.y + 'px';
-			e.style.width = from.w + 'px';
-			e.style.height = from.h + 'px';
+			e.style.left = from.x + 'px', e.style.top = from.y + 'px';
+			e.style.width = from.w + 'px', e.style.height = from.h + 'px';
 			e.style.zIndex = 9999;
 			e.style.overflow = 'hidden';
 			e.style.pointerEvents = 'none';
+			e.style.color = from.c, e.style.opacity = from.a;
 			e.style.userSelect = e.style.MozUserSelect = 'none';
 			snap(e);
 			into.append(e);
@@ -182,12 +182,13 @@
 						setTimeout(() => write(() => e.remove()), dur);
 					})
 			});
-		}catch(err){log(err)}});
+		}catch(err){log(err);throw err}});
 	}
 
 
 
 	function lock(e) {
+		"Only parent or child, never both — wild.",
 		`Fail if e or its parents or children were locked.`
 		"(In other words, if any ancestors were locked directly, or if e was locked in/directly.)"
 			"(here, locks.get(e) is: >0 — indirect, <0 — direct, void — neither.)"
@@ -226,6 +227,21 @@
 
 
 
+	function alpha(e) {
+		let p, r = 1, s;
+		for (p = e; p && p !== self && p !== document; p = p.parentNode)
+			if (p.nodeType===1) {
+				s = getComputedStyle(p);
+				if (s.visibility === 'hidden' || s.display === 'none') return 0;
+				r *= +s.opacity || 1;
+			}
+		"What the hell is going on with YT's options, if this does not catch it?"
+			"should we try outputting inline styles?"
+			"or watching elements to see if they have something suspicious before the fall?"
+		"and why do view-more/less not animate, sometimes?"
+			"seriously. what are we doing wrong?"
+		return r;
+	}
 	function layout(e) {
 		read();
 		const er = clientRect(e);
@@ -233,6 +249,7 @@
 		const s = getComputedStyle(e.nodeType === 1 ? e : document.documentElement);
 		if (s.display === 'none' || s.position === 'sticky') return;
 		const p = getContainer(e,s);
+		if (!p || !p.nodeType || p.nodeType !== 1) return;
 		const pr = clientRect(p), ps = getComputedStyle(p);
 		if (!pr) return;
 		const px = pr.x - p.scrollLeft - parseFloat(ps.paddingLeft);
@@ -269,7 +286,10 @@
 			const str = s.transformOrigin;
 			sx = parseFloat(str), sy = parseFloat(str.slice(str.indexOf(' ') + 1));
 		}
-		return { p, ox,oy, x,y,w,h, cx,cy,cw,ch, ix,iy, sx,sy };
+		`${"And a color, to better match the fading out looks in case the applied styles change."}
+			And the alpha, to even better match the looks.`
+		const c = s.color, a = alpha(e);
+		return { p, ox,oy, x,y,w,h, cx,cy,cw,ch, ix,iy, sx,sy, c, a };
 	}
 	function getContainer(e,s) {
 		let p;
@@ -297,11 +317,36 @@
 		l.p = as;
 		return l;
 	}
-	function appeared(e) { if (!e[prev]) e[prev] = null;  look(e), touch(e), spread(e) }
+	function seekImages(e) {
+		try {
+			if (e.nodeType===1 && e.tagName === 'IMG' && !e.complete) {
+				write(() => hide(e, true));
+				imageShowIds.set(e, setTimeout(showImage, 1000, e));
+				e.addEventListener('load', showImage, once);
+			}
+			let ch;
+			for (ch = e.firstChild; ch; ch = ch.nextSibling)
+				seekImages(ch);
+		}catch(err){log(err);throw err}
+	}
+	function showImage(e) {
+		try {
+			if (e.target) e = e.target;
+			if (!imageShowIds.has(e)) return;
+			e.removeEventListener('load', showImage, once);
+			clearTimeout(imageShowIds.get(e)), imageShowIds.delete(e);
+			write(() => show(e));
+		}catch(err){log(err);throw err}
+	}
+	function appeared(e) {
+		if (!e[prev]) e[prev] = null;
+		look(e), touch(e), spread(e), seekImages(e);
+	}
 	function moved(e) {
 		read();
 		if (e === document.body) return spread(e), false;
 		const from = e[prev], to = look(e) || from && void 0;
+		if (from === void 0) touch(e);
 		if (!from || !to) return;
 
 		if (e.nodeType !== 1 || !e.nodeType) return false;
@@ -325,6 +370,7 @@
 				e.style.transform = `translate(${dx}px,${dy}px)`;
 			read(() => write(() => {
 				snap(e, false), removeProperty(e, 'transform');
+				setTimeout(() => read(() => look(e)), dur);
 			}));
 		});
 		return true;
@@ -384,6 +430,7 @@
 			//sc.scrollLeft += dx;
 			//sc.scrollTop += dy;
 			"While a great idea, doesn't seem to work."
+				"Should we try to turn it on now?"
 		}
 		("The last pointer-moved-over element (anchor) will try to stay in its viewport position through layout changes, by scrolling the document.")
 	}
@@ -396,7 +443,7 @@
 		if (from === void 0) return;
 		if (!from)
 			return void write(() => {
-				hide(e), read(() => write(() => show(e, false)));
+				hide(e), read(() => write(() => show(e)));
 			});
 		if (!to) return void absoluteRemove(e, from, document.documentElement);
 		return to;
@@ -447,6 +494,7 @@
 		{"Prioritize on-screen by skipping 30% off-screen.",
 			"Those that took too long to process, free^n."}
 		++touchNumber;
+		if (n.parentNode && n.parentNode[prev] === void 0) dirty.set(n.parentNode, time);
 		if (now() - time > 30 | 'ms')
 			look(n), shiny.add(n);
 		else if (cur++ < len && now() - start < 3 && offscreen(n))

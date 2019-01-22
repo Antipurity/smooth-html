@@ -1,33 +1,40 @@
 (function() {try{
-	"Allocates memory hideously.", "Uses maps where properties would have sufficed.";
+	{"Allocates memory hideously: for-of, closures everywhere…"
+		"And uses maps where properties would have sufficed, mainly for caches."}
 
-	"May break, in pages:"
-	"Page code reading children of document.documentElement may break (that is where clones of removed nodes get put to die neatly)."
-	"Page code reading element.className (and not .classList) might break.",
-	"Page code reading element.style.transform might break (it is used for position transitions).";
-	"Fade-out clones elements, so matching CSS rules may change (if they depended on their still-alive parents), and removed elements may look different before they disappear.";
+	{"May break, in other pages:"
+		"Inline filter and transition-* on element.style WILL get removed."
+		"Those style props specified in the `ins` option WILL get removed too."
+		"Code reading children of document.documentElement may break (that is where clones of removed nodes get put to die neatly)."
+		"Code reading children of document.head may break (that is where CSS/SVG get put)."
+		"Code reading element.className (and not .classList) might break."
+		"Code reading/writing element.style.transform might rarely break."}
 
 	if (typeof self === ''+void 0) return;
 	const log = console.log;
 	const prev = Symbol('prevLayout');
 	finish.r = [], finish.w = [], finish.s = 0, finish.rects = new Map;
+	alpha.a = new Map, layout.a = [];
+	setInterval(() => layout.a.length = 0, 1000);
+
+	(function need(...globals) {
+		const bad = globals.filter(g => !self[g]);
+		if (bad.length) throw 'Browser does not support '+bad+' — cannot be ⴻsmooth';
+	})('document', 'MutationObserver', 'requestAnimationFrame', 'performance');
 
 	const isFinite = Number.isFinite, parseFloat = Number.parseFloat;
-	if (!self.MutationObserver)
-		return console.info('Browser does not support MutationObserver — cannot smooth');
 	const once = { capture:true, once:true, passive:true }, many = { capture:true, passive:true };
-	if (!self.requestAnimationFrame)
-		return console.info('Browser does not support requestAnimationFrame — cannot smooth');
-	if (!self.performance)
-		return console.info('Browser does not support performance — cannot smooth');
-	const nextFrame = self.requestAnimationFrame.bind(self);
-	const now = self.performance.now.bind(self.performance);
-	const dur = 200|("ms is hardcoded", "since laziness can be afforded.");
+	const nextFrame = requestAnimationFrame.bind(self);
+	const now = performance.now.bind(performance);
 	const locks = new Map;
 	const dirty = new Map, shiny = new Set;
-	const imageShowIds = new Map;
-	let scheduled = false, start, cur, len, touchNumber = 0;
-	setInterval(() => { 0 && touchNumber && log('touched:', touchNumber), touchNumber = 0 }, 1000);
+	const imageShowIds = new Map, imageInsUndos = new Map;
+	let scheduled = false, start, cur, len;
+	const options = {
+		props:'all', ease:'ease-out', dur:200, delay:0,
+		ins:{opacity:0}, del:{opacity:0}
+	};
+	let props, ease, dur, delay; "Chosen at style-init time."
 
 
 
@@ -43,32 +50,69 @@
 			subtree:true,
 		});
 		seekImages(document.body);
-
-		read(() => {
-			{"Including this script and transition.css in a page directly, and having <body class=ⴻvoid>, will make it fade in."}
-				("Though it's enough to just have (in addition to the class):",
-					"css, .ⴻvoid  {  opacity: 0;  filter: blur(2px);  visibility: hidden  }",
-					"js, `setTimeout(()=>document.body.classList.remove('ⴻvoid'), 100)` or the like.")
-			if (document.body.classList.contains('ⴻvoid'))
-				write(() => show(document.body));
-			else if ("scripts didn't inject so late")
-				"document.body would have faded in great";
-		});
+		write(() => initStyle()), finish();
 
 		addEventListener('resize', () => read(() => touch(document.body)), many);
-		addEventListener('transitionstart', evt => evt.target && read(() => touch(evt.target)), many);
-		addEventListener('transitionend', evt => evt.target && read(() => look(evt.target)), many);
+		addEventListener('transitionstart', evt => {
+			if (evt.target) read(() => touch(evt.target)), finish();
+		}, many);
+		addEventListener('transitionend', evt => {
+			if (evt.target)
+				read(() => look(evt.target)), write(() => removeTrans(evt.target)), finish();
+		}, many);
+		addEventListener('transitioncancel', evt => {
+			"When transitions interrupt each other, the second one will now hopefully start midway."
+			const e = evt.target, time = evt.elapsedTime, prop = evt.propertyName;
+			if (e && !evt.pseudoElement)
+				read(() => {
+					if (!alpha(e)) return;
+					addTrans(e, 'transition-property', prop);
+					addTrans(e, 'transition-timing-function', ease);
+					addTrans(e, 'transition-delay', delay/1000 - time + 's');
+					addTrans(e, 'transition-duration', dur/1000 + time + 's');
+				}), finish();
+		}, many);
+
 		addEventListener(self.PointerEvent ? 'pointerenter' : 'mouseenter', enter, many);
 		let id = null;
-		function enter(evt) {
+		function enter(evt) { "Debounce point(evt.target)."
 			clearTimeout(id), id = evt.target ? setTimeout(point, 300, evt.target) : null;
 		}
-		function point(e) {
-			id = null, read(() => {
-				anchor(e);
+		function point(e) { "Just in case it changed, update elem and all its parents."
+			id = null, e.isConnected !== false && read(() => {
+				anchor(e); "Position of e should be preserved through layout changes."
+				while (e.firstChild) e = e.firstChild;
 				for (p = e; p && p !== self && p !== document; p = p.parentNode) look(p);
 			});
 		}
+	}
+	function opt(o,e) {
+		o = options[o]; "option getter, to optionally allow customizing some behavior."
+		while (true)
+			if (Array.isArray(o)) o = o[Math.floor(Math.random() * o.length)];
+			else if (typeof o === 'function') o = o(e);
+			else return o;
+	}
+	function initStyle() {
+		write();
+		let e = document.querySelector('#ⴻ');
+		if (!e) e = document.head.appendChild(document.createElement('style')), e.id = 'ⴻ';
+		if (self.matchMedia) {
+			let s = 'screen'; "The media query language is extremely poor, and so is this code."
+			if (matchMedia('(update:none),(update:slow),(update:fast)').matches)
+				s += ' and (update:fast)';
+			if (matchMedia('(prefers-reduced-motion:no-preference),(prefers-reduced-motion:reduce)').matches)
+				s += ' and (prefers-reduced-motion:no-preference)';
+			e.media = s;
+		}
+		if (!e.sheet) return;
+		const s = e.sheet;
+		for (var i = s.length; i-- > 0; ) s.deleteRule(i);
+		props = opt('props'), ease = opt('ease'), dur = opt('dur'), delay = opt('delay');
+		const tr = `${props} ${ease} ${dur}ms ${delay}ms`;
+		s.insertRule(`:not(input):not(button) { transition:${tr} }`, 0);
+		s.insertRule('.ⴻsnap { transition: none !important }', 1);
+		s.insertRule('.ⴻvoid { display:block; position:absolute; margin:0; z-index:9999; overflow:hidden; pointer-events:none; user-select:none; -moz-user-select:none; -webkit-user-select:none }', 2);
 	}
 	function on(a) {
 		read(() => {
@@ -94,7 +138,7 @@
 								continue;
 							}
 						}
-						"Those before do not catch all .textContent sets, but most, so good enough."
+						"Those above do not catch all .textContent sets, but most, so good enough."
 						x.forEach(appeared);
 						y.forEach(moved);
 					}
@@ -105,41 +149,96 @@
 	}
 	function removeProperty(e, prop) {
 		write();
-		e.style.removeProperty(prop);
+		if (e.nodeType !== 1) return;
+		if (prop) e.style.removeProperty(prop);
 		if (!e.style.length) e.removeAttribute('style');
 	}
 	function unclass(e, ...k) {
 		write();
+		if (e.nodeType !== 1) return;
 		e.classList.remove(...k);
 		if (!e.classList.length) e.removeAttribute('class');
 	}
-
-
-
-	function hide(e, imm = true) {
-		write();
+	function addTrans(e,k,v) {
+		read();
 		if (e.nodeType !== 1) return;
-		snap(e, imm);
-		e.classList.add('ⴻvoid');
+		if (getComputedStyle(e)[k]) v += ',' + getComputedStyle(e)[k];
+		write(() => e.style.setProperty(k,v));
 	}
-	function show(e) {
+	function removeTrans(e) {
 		write();
 		if (e.nodeType !== 1) return;
-		snap(e, false);
-		unclass(e, 'ⴻvoid');
+		e.style.removeProperty('transition-property');
+		e.style.removeProperty('transition-timing-function');
+		e.style.removeProperty('transition-delay');
+		e.style.removeProperty('transition-duration');
+		removeProperty(e);
+	}
+
+
+
+	function fadeIn(e) {
+		if (e.nodeType !== 1) return;
+		write();
+		const o = opt('ins', e);
+		for (let k in o) e.style[k] = o[k];
+		snap(e, true);
+		return () => {
+			snap(e, false);
+			for (let k in o) e.style.removeProperty(k);
+			removeProperty(e);
+		};
+	}
+	function fadeOut(e) {
+		if (e.nodeType !== 1) return;
+		write();
+		const o = opt('del', e);
+		for (let k in o) e.style[k] = o[k];
 	}
 	function snap(e, to = true) {
 		write();
 		if (e === document.body) return;
 		if (e.nodeType === 1) to ? e.classList.add('ⴻsnap') : unclass(e, 'ⴻsnap');
 	}
-	function absoluteRemove(e, from, into) {
+	function clone(e) {
+		dirty.delete(e);
+		const to = e.cloneNode(false);
+		let ch;
+		for (ch = e.firstChild; ch; ch = ch.nextSibling)
+			to.appendChild(clone(ch));
+		return to;
+	}
+	function layoutChanged(e) {
+		const from = e[prev], to = e[prev] = layout(e);
+		try {
+			if (from === void 0) return false;
+			if (!from !== !to) return true;
+			if (!from && !to) return false;
+			if (!intoSameSpace(from, to.p)) return false;
+			if (Math.round(from.x - to.x) !== 0) return true;
+			if (Math.round(from.y - to.y) !== 0) return true;
+			if (Math.round(from.w - to.w) !== 0) return true;
+			if (Math.round(from.h - to.h) !== 0) return true;
+			if (from.c !== to.c) return true;
+			if (from.a !== to.a) return true;
+			let ch;
+			for (ch = e.firstChild; ch; ch = ch.nextSibling)
+				if (layoutChanged(ch)) return true;
+			return false;
+		} finally { layoutDiscard(from) }
+	}
+	function layoutDiscard(o) { o && layout.a.push(o) }
+	function polluteGetters(o, stack) {
+		"Used to debug use-after-free."; for (var k in o)
+			Object.defineProperty(o, k, { get() { throw Error("ⴻuse after free at:\n"+stack) } });
+	}
+	function absoluteFadeout(e, from, into) {
 		read();
-		if (e.parentNode) return;
 		if (!e || !from || !from.p || !from.a) return;
 		const oldPL = from.p[prev] || layout(from.p);
-		intoSameSpace(from, into);
-		e = e.cloneNode(true);
+		const pw = oldPL ? oldPL.cw : 0, ph = oldPL ? oldPL.ch : 0;
+		if (!intoSameSpace(from, into)) return;
+		e = clone(e), e[prev] = from;
 		write(() => {try{
 			if (e.nodeType !== 1) {
 				const p = document.createElement('span');
@@ -147,10 +246,10 @@
 				p.appendChild(e);
 				e = p;
 			}
-			if (from.ix !== null && oldPL) {
+			if (from.ix !== null && (pw || ph)) {
 				const p = document.createElement('div');
-				p.style.width = oldPL.cw + 'px';
-				p.style.height = oldPL.ch + 'px';
+				p.style.width = pw + 'px';
+				p.style.height = ph + 'px';
 				const sp = document.createElement('span');
 				sp.style.display = 'inline-block';
 				sp.style.width = (from.ix - from.x) + 'px';
@@ -159,39 +258,91 @@
 				p.appendChild(e);
 				e = p;
 			}
-			e.style.display = 'block';
-			e.style.position = 'absolute';
-			e.style.margin = 0;
-			e.style.left = from.x + 'px', e.style.top = from.y + 'px';
-			e.style.width = from.w + 'px', e.style.height = from.h + 'px';
-			e.style.zIndex = 9999;
-			e.style.overflow = 'hidden';
-			e.style.pointerEvents = 'none';
-			e.style.color = from.c, e.style.opacity = from.a;
-			e.style.userSelect = e.style.MozUserSelect = 'none';
-			snap(e);
+			e.classList.add('ⴻvoid');
+			const s = e.style;
+			s.left = from.x + 'px', s.top = from.y + 'px';
+			s.width = from.w + 'px', s.height = from.h + 'px';
+			s.color = from.c;
+			if (from.a !== 1) s.opacity = from.a;
+			snap(e, true);
 			into.append(e);
 			read(() => {
-				const to = layout(e);
-				if (Math.round(from.cw - to.cw)!==0 || Math.round(from.ch - to.ch)!==0)
-					write(() => e.remove());
-				else
-					write(() => {
-						hide(e, false);
-						ontransitionendHasNotProvenSteadfast => 'easier to not trust';
-						setTimeout(() => write(() => e.remove()), dur);
-					})
+				if (layoutChanged(e)) write(() => e.remove());
+				else write(() => {
+					snap(e, false), fadeOut(e);
+					ontransitionendHasNotProvenSteadfast => 'easier to not trust';
+					setTimeout(() => write(() => e.remove()), dur);
+					("from should be discarded by the caller.")
+				});
 			});
-		}catch(err){log(err);throw err}});
+		}catch(err){log('ⴻ',err);throw err}});
+	}
+
+
+
+	function svg(name) { return document.createElementNS('http://www.w3.org/2000/svg', name) }
+	function defs() {
+		write();
+		let e = document.getElementById('ⴻdefs');
+		if (!e) {
+			e = document.head.appendChild(svg('svg'));
+			e.style.display = 'none';
+			e = e.appendChild(svg('defs'));
+			e.id = 'ⴻdefs';
+		}
+		return e;
+	}
+	function blur(x,y) {
+		"isn't this in write though?…"
+		const id = 'ⴻ'+x+','+y;
+		let e = document.getElementById(id);
+		if (!e) {
+			const b = svg('feGaussianBlur');
+			b.setAttribute('in', 'SourceGraphic');
+			b.setAttribute('edgeMode', 'none');
+			b.setStdDeviation(x,y);
+			e = svg('filter');
+			e.id = id;
+			e.appendChild(b);
+			defs().appendChild(e);
+		}
+		e.setAttribute('refs', (e.getAttribute('refs') || 0) + 1);
+		return id;
+	}
+	function blurDispose(id) {
+		const e = document.getElementById(id);
+		if (!e) return; "decrement ref-count, remove element if 0"
+		e.setAttribute('refs', (e.getAttribute('refs') || 0) - 1);
+		if (!e.getAttribute('refs')) e.remove();
+	}
+	function motion(e, from, to) {
+		const x1 = from.ax - to.ax, x2 = from.ax+from.w - (to.ax+to.w);
+		const y1 = from.ay - to.ay, y2 = from.ay+from.h - (to.ay+to.h);
+		const x = (x1>0) === (x2>0) ? Math.floor(Math.min(Math.abs(x1), Math.abs(x2))) : 0;
+		const y = (y1>0) === (y2>0) ? Math.floor(Math.min(Math.abs(y1), Math.abs(y2))) : 0;
+		read();
+		if (!x || !y || x>5 && y>5) return e.style.filter && write(() => {
+			removeProperty(e, 'filter');
+		}), false;
+		const pre = getComputedStyle(e).filter;
+		write(() => {
+			const id = blur(x,y);
+			if (!id) return;
+			setTimeout(blurDispose, 100, id);
+			const add = `url(#${CSS.escape(id)})`;
+			if (!pre || pre === 'none') e.style.filter = add;
+			else e.style.filter = pre+' '+add;
+		});
+		return true;
 	}
 
 
 
 	function lock(e) {
 		"Only parent or child, never both — wild.",
-		`Fail if e or its parents or children were locked.`
+		`Fail if e or its parents or children were locked.
 		"(In other words, if any ancestors were locked directly, or if e was locked in/directly.)"
-			"(here, locks.get(e) is: >0 — indirect, <0 — direct, void — neither.)"
+			"(here, locks.get(e) is: >0 — indirect, <0 — direct, void — neither.)"`
 		if (locks.has(e)) return false;
 		let p;
 		for (p = e.parentNode; p && p !== self && p !== document; p = p.parentNode)
@@ -209,8 +360,8 @@
 			if (!locks.has(a[i])) locks.set(a[i], 1);
 			else if (locks.get(a[i]) > 0) locks.set(a[i], locks.get(a[i]) + 1);
 			else if (locks.get(a[i]) < 0) locks.set(a[i], locks.get(a[i]) - 1);
-			else throw log(a[i]), "Zero-locks detected (should be not in the map at all)";
-		if (!locks.has(e)) throw "a does not contain e";
+			else throw "Zero-locks detected (should be not in the map at all)";
+		if (!locks.has(e)) throw "array does not contain e";
 		if (locks.get(e)<0) throw "Directly locked twice";
 		locks.set(e, -locks.get(e));
 	}
@@ -220,38 +371,96 @@
 			if (locks.get(a[i]) > 1) locks.set(a[i], locks.get(a[i]) - 1);
 			else if (locks.get(a[i]) < -1) locks.set(a[i], locks.get(a[i]) + 1);
 			else locks.delete(a[i]);
-		if (!locks.has(e)) throw "a does not contain e";
+		if (!locks.has(e)) throw "array does not contain e";
 		if (locks.get(e)>0) throw "Directly unlocked what has not been directly locked";
 		locks.set(e, -locks.get(e));
 	}
 
 
 
+	function box(e, color = 'royalblue') {
+		const l = layout(e);
+		showBox(l.p, l.x, l.y, l.w, l.h, color);
+		layoutDiscard(l);
+	}
+	function showBox(p, x,y,w,h, color = 'royalblue') {
+		"For debugging, to show the from/to boxes, to ensure that transforms move like foxes."
+		const from = { p,x,y,w,h, ix:null }
+		if (!intoSameSpace(from, document.documentElement)) return;
+		write(() => {
+			const e = document.createElement('div');
+			const s = e.style;
+			s.border = '3px solid ' + color;
+			s.left = from.x + 'px';
+			s.top = from.y + 'px';
+			s.width = from.w + 'px';
+			s.height = from.h + 'px';
+			s.borderRadius = '3px';
+			s.boxSizing = 'border-box';
+			document.documentElement.append(e);
+			read(() => {
+				write(() => {
+					fadeOut(e);
+					e.classList.add('ⴻvoid');
+					setTimeout(() => e.remove(), dur);
+				});
+			});
+		});
+	}
+
+
+
+	function anchor(e = void 0) {
+		("The last pointer-moved-over element (anchor) will try to stay in its viewport position through layout changes, by scrolling the document.")
+		if (e) {
+			const r = layout(e);
+			if (!r) return anchor.e = void 0;
+			anchor.e = e;
+			anchor.x = r.ox + r.cw/2;
+			anchor.y = r.oy + r.ch/2;
+			layoutDiscard(r);
+		} else if (anchor.e) {
+			finish.s = 1;
+			const r = layout(anchor.e);
+			if (!r) return anchor.e = void 0;
+			const sc = document.scrollingElement || document.documentElement;
+			const dx = Math.round(anchor.x - (r.ox + r.cw/2));
+			const dy = Math.round(anchor.y - (r.oy + r.ch/2));
+			layoutDiscard(r);
+			if (!dx || !dy) return;
+			log('scroll:', dx, dy); //#
+			finish.s = 2;
+			sc.scrollLeft += dx; //#
+			sc.scrollTop += dy; //#
+			"Should we try to turn it on now? Well, we'll see how applicable it is now."
+		}
+	}
+
+
+
 	function alpha(e) {
-		let p, r = 1, s;
-		for (p = e; p && p !== self && p !== document; p = p.parentNode)
-			if (p.nodeType===1) {
-				s = getComputedStyle(p);
-				if (s.visibility === 'hidden' || s.display === 'none') return 0;
-				r *= +s.opacity || 1;
-			}
-		"What the hell is going on with YT's options, if this does not catch it?"
-			"should we try outputting inline styles?"
-			"or watching elements to see if they have something suspicious before the fall?"
-		"and why do view-more/less not animate, sometimes?"
-			"seriously. what are we doing wrong?"
-		return r;
+		if (alpha.a.has(e)) return alpha.a.get(e);
+		if (e && e !== self && e !== document && e.nodeType === 1) {
+			const s = getComputedStyle(e);
+			let r;
+			if (s.visibility === 'hidden' || s.display === 'none') r = 0;
+			else r = alpha(e.parentNode) * (+s.opacity || 1);
+			alpha.a.set(e, r);
+			return r;
+		} else return 1;
 	}
 	function layout(e) {
-		read();
+		read(); "Return an object describing e's layout, relative to parent where possible."
+		"x/y/w/h/cx/cy/cw/ch/ix/iy/sx/sy/c/a could be mid-transition, but p/ox/oy are unaffected."
 		const er = clientRect(e);
-		if (!er || !e.nodeType) return;
+		if (!er || !e.nodeType) return null;
+		const ax = er.x + scrollX, ay = er.y + scrollY; "absolute x/y"
 		const s = getComputedStyle(e.nodeType === 1 ? e : document.documentElement);
-		if (s.display === 'none' || s.position === 'sticky') return;
+		if (s.display === 'none' || s.position === 'sticky') return null;
 		const p = getContainer(e,s);
-		if (!p || !p.nodeType || p.nodeType !== 1) return;
+		if (!p || !p.nodeType || p.nodeType !== 1) return null;
 		const pr = clientRect(p), ps = getComputedStyle(p);
-		if (!pr) return;
+		if (!pr) return null;
 		const px = pr.x - p.scrollLeft - parseFloat(ps.paddingLeft);
 		const py = pr.y - p.scrollTop - parseFloat(ps.paddingTop);
 		const x = er.x - px, y = er.y - py;
@@ -289,7 +498,13 @@
 		`${"And a color, to better match the fading out looks in case the applied styles change."}
 			And the alpha, to even better match the looks.`
 		const c = s.color, a = alpha(e);
-		return { p, ox,oy, x,y,w,h, cx,cy,cw,ch, ix,iy, sx,sy, c, a };
+		
+		if (layout.a.length) {
+			const o = layout.a.pop();
+			o.p=p, o.ax=ax, o.ay=ay, o.ox=ox,o.oy=oy, o.x=x, o.y=y, o.w=w, o.h=h;
+			o.cx=cx, o.cy=cy, o.cw=cw, o.ch=ch, o.ix=ix, o.iy=iy, o.sx=sx, o.sy=sy, o.c=c, o.a=a;
+			return o;
+		} else return { p, ax,ay, ox,oy, x,y,w,h, cx,cy,cw,ch, ix,iy, sx,sy, c,a };
 	}
 	function getContainer(e,s) {
 		let p;
@@ -297,19 +512,19 @@
 			for (p = e.parentNode; p && p !== self && p !== document; p = p.parentNode) {
 				("Returned style object is live, so it should be already cached.")
 				s = getComputedStyle(p);
-				if (p.transform !== 'none') break;
-				if (p.perspective !== 'none') break;
-				if (p.filter !== 'none') break;
+				if (s.transform !== 'none') break;
+				if (s.perspective !== 'none') break;
+				if (s.filter !== 'none') break;
 			}
-		else
-			p = s.position === 'absolute' ? e.offsetParent || e.parentNode : e.parentNode;
+		else p = s.position === 'absolute' ? e.offsetParent || e.parentNode : e.parentNode;
 		return !p || p === document ? document.documentElement : p;
 	}
 	function intoSameSpace(l, as) {
 		read();
 		if (!l.p || !as) return l;
-		const lr = clientRect(l.p), asr = clientRect(as);
-		const dx = lr.x - asr.x, dy = lr.y - asr.y;
+		const lr = l.p[prev], asr = as[prev];
+		if (!lr || !asr) return;
+		const dx = lr.ax - asr.ax, dy = lr.ay - asr.ay;
 		l.ox += Math.round(dx), l.oy += Math.round(dy);
 		if (l.ix !== null) l.ix += dx, l.iy += dy;
 		l.x += dx, l.cx += Math.round(dx);
@@ -318,25 +533,19 @@
 		return l;
 	}
 	function seekImages(e) {
-		try {
-			if (e.nodeType===1 && e.tagName === 'IMG' && !e.complete) {
-				write(() => hide(e, true));
-				imageShowIds.set(e, setTimeout(showImage, 1000, e));
-				e.addEventListener('load', showImage, once);
-			}
-			let ch;
-			for (ch = e.firstChild; ch; ch = ch.nextSibling)
-				seekImages(ch);
-		}catch(err){log(err);throw err}
+		if (e.nodeType===1 && e.tagName === 'IMG' && !e.complete) {
+			write(() => imageInsUndos.set(e, fadeIn(e)));
+			imageShowIds.set(e, setTimeout(showImage, 1000, e));
+			e.addEventListener('load', showImage, once);
+		}
+		for (let ch = e.firstChild; ch; ch = ch.nextSibling) seekImages(ch);
 	}
 	function showImage(e) {
-		try {
-			if (e.target) e = e.target;
-			if (!imageShowIds.has(e)) return;
-			e.removeEventListener('load', showImage, once);
-			clearTimeout(imageShowIds.get(e)), imageShowIds.delete(e);
-			write(() => show(e));
-		}catch(err){log(err);throw err}
+		if (e.target) e = e.target;
+		if (!imageShowIds.has(e)) return;
+		e.removeEventListener('load', showImage, once);
+		clearTimeout(imageShowIds.get(e)), imageShowIds.delete(e);
+		write(imageInsUndos.get(e)), imageInsUndos.delete(e);
 	}
 	function appeared(e) {
 		if (!e[prev]) e[prev] = null;
@@ -344,28 +553,36 @@
 	}
 	function moved(e) {
 		read();
-		if (e === document.body) return spread(e), false;
-		const from = e[prev], to = look(e) || from && void 0;
-		if (from === void 0) touch(e);
-		if (!from || !to) return;
+		if (e === document.body) layoutDiscard(e[prev]), e[prev] = void 0;
+		if (e.classList && e.classList.contains('ⴻvoid')) return false;
+		const from = e[prev], to = look(e, false) || from && void 0;
+		if (from === void 0) return true;
+		if (!from || !to) return false;
 
-		if (e.nodeType !== 1 || !e.nodeType) return false;
-		const s = getComputedStyle(e);
-		if (s.display.indexOf('block')<0) return false;
-		if (s.transform !== 'none') return false;
-		intoSameSpace(from, to.p);
-		const sx = from.w / to.w, sy = from.h / to.h;
-		const dx = from.ox - to.ox, dy = from.oy - to.oy;
-		const scaled = isFinite(sx) && isFinite(sy) && (sx !== 1 || sy !== 1);
-		if (!dx && !dy && !scaled) return false;
-		if (Math.abs(from.w - to.w) > 1000 || Math.abs(from.h - to.h) > 1000)
-			return "Doesn't look so good — do not take this route", false;
-		if (!lock(e)) return;
+		let dx,dy, sx,sy, scaled;
+		try {
+			if (e.nodeType !== 1 || !e.nodeType) return false;
+			const s = getComputedStyle(e);
+			if (s.display.indexOf('block')<0) return false;
+			if (!intoSameSpace(from, to.p)) return false;
+			const m = motion(e, from, to);
+			if ((e.style.transform || 'none') !== 'none') return m;
+			if ((s.transform || 'none') !== 'none') return false;
+			sx = from.w / to.w, sy = from.h / to.h;
+			dx = from.ox - to.ox, dy = from.oy - to.oy;
+			scaled = isFinite(sx) && isFinite(sy) && (sx !== 1 || sy !== 1);
+			if (!dx && !dy && !scaled) return false;
+			if (Math.abs(from.w - to.w) > 1000 || Math.abs(from.h - to.h) > 1000)
+				return "Doesn't look so good — do not take this route", false;
+			if (!lock(e)) return false;
+			box(e);
+		} finally { layoutDiscard(from) }
+		const tosx = to.sx, tosy = to.sy;
 
 		write(() => {
 			snap(e, true);
 			if (scaled)
-				e.style.transform = `translate(${dx + to.sx * (sx-1)}px,${dy + to.sy * (sy-1)}px) scale(${sx},${sy})`;
+				e.style.transform = `translate(${dx + tosx * (sx-1)}px,${dy + tosy * (sy-1)}px) scale(${sx},${sy})`;
 			else
 				e.style.transform = `translate(${dx}px,${dy}px)`;
 			read(() => write(() => {
@@ -378,74 +595,27 @@
 
 
 
-	function showBox(e, color = 'red') {
-		const l = layout(e);
-		box(l.p, l.x, l.y, l.w, l.h, color);
-	}
-	function box(p, x,y,w,h, color = 'red') {
-		"For debugging, to show the from/to boxes, to ensure that transforms are like foxes."
-		try{
-			const from = { p,x,y,w,h, ix:null }
-			intoSameSpace(from, document.documentElement);
-			write(() => {
-				const e = document.createElement('div');
-				e.style.position = 'absolute';
-				e.style.border = '3px solid ' + color;
-				e.style.left = from.x + 'px';
-				e.style.top = from.y + 'px';
-				e.style.width = from.w + 'px';
-				e.style.height = from.h + 'px';
-				e.style.zIndex = 99999;
-				e.style.pointerEvents = 'none';
-				document.documentElement.append(e);
-				read(() => {
-					write(() => {
-						hide(e, false);
-						setTimeout(() => e.remove(), dur);
-					});
-				});
-			});
-		}catch(err){log(err)}
-	}
+	"look updates layout info and applies animations",
+	"touch marks as dirty; if a dirty one moved since last time, its dirtiness spreads to layout siblings/parent/children, but if it did not move, it becomes shiny to prevent back-flow."
+	let lastDirty = 0, timeToMove, offscreenSkip; 'ms'
+	"timeToMove is the max duration of a read phase — read+write should not exceed 1/60 seconds."
+	{"Prioritize on-screen by skipping 40% off-screen before processing.",
+		"Those that took too long to process, free (spread if unseen though)."}
 
-
-
-	function anchor(e = void 0) {
-		if (e) {
-			const r = layout(e);
-			if (!r) return anchor.e = void 0;
-			anchor.e = e;
-			anchor.x = r.ox + r.cw/2;
-			anchor.y = r.oy + r.ch/2;
-		} else if (anchor.e) {
-			finish.s = 1;
-			const r = layout(anchor.e);
-			if (!r) return anchor.e = void 0;
-			const sc = document.scrollingElement || document.documentElement;
-			const dx = Math.round(anchor.x - (r.ox + r.cw/2));
-			const dy = Math.round(anchor.y - (r.oy + r.ch/2));
-			if (!dx || !dy) return;
-			//log('scroll:', dx, dy);
-			finish.s = 2;
-			//sc.scrollLeft += dx;
-			//sc.scrollTop += dy;
-			"While a great idea, doesn't seem to work."
-				"Should we try to turn it on now?"
-		}
-		("The last pointer-moved-over element (anchor) will try to stay in its viewport position through layout changes, by scrolling the document.")
-	}
-
-
-
-	function look(e) {
+	"…It literally takes 3-4 ms to set up, and only THEN it can actually do anything useful."
+		"What. Why."
+		"If that is so, maybe we should base timeToMove on how much time has passed or something?"
+	function look(e, discard = true) {
 		if (!e) return;
 		const from = e[prev], to = e[prev] = layout(e);
-		if (from === void 0) return;
+		if (from === void 0) return void touch(e);
 		if (!from)
 			return void write(() => {
-				hide(e), read(() => write(() => show(e)));
+				const f = fadeIn(e);
+				f && read(() => write(f));
 			});
-		if (!to) return void absoluteRemove(e, from, document.documentElement);
+		if (!to) return void absoluteFadeout(e, from, document.documentElement);
+		else if (discard) layoutDiscard(from);
 		return to;
 	}
 	function touch(e, time = now()) {
@@ -461,7 +631,7 @@
 	}
 	function alone(e) {
 		if (e.nodeType !== 1 || !e.nodeType) return false;
-		const s = getComputedStyle(e); 'Presumably already cached.'
+		const s = getComputedStyle(e); 'Presumed already cached.'
 		return s.position === 'absolute' || s.position === 'fixed';
 	}
 	function neighbors(e, time = now()) {
@@ -476,9 +646,15 @@
 		read();
 		anchor.e && anchor(anchor.e);
 		start = now(), cur = 0, len = Math.min(dirty.size, 24);
+		"We also limit the number of offscreen checks to len."
+		if (start - lastDirty > 1000) timeToMove = 50, offscreenSkip = 20;
+		else if (start - lastDirty > 100) timeToMove = 20, offscreenSkip = 8;
+		else if (start - lastDirty > 10) timeToMove = 5, offscreenSkip = 2;
+		else timeToMove = 1, offscreenSkip = 0;
 		try { dirty.forEach(cleanOne) }
-		catch (err) { if (err !== null) throw log(err), err }
+		catch (err) { if (err !== null) throw log('ⴻ', err), err }
 		shiny.clear();
+		lastDirty = start;
 		if (dirty.size) nextFrame(() => read(clean)), scheduled = true;
 		else scheduled = false;
 	}
@@ -489,23 +665,27 @@
 		if (r.left >= innerWidth || r.top >= innerHeight) return true;
 		return false;
 	}
-	function cleanOne(time, n) {
+	function cleanOne(time, n) { "(keys/values are swapped for map's forEach for some reason.)"
 		dirty.delete(n);
-		{"Prioritize on-screen by skipping 30% off-screen.",
-			"Those that took too long to process, free^n."}
-		++touchNumber;
-		if (n.parentNode && n.parentNode[prev] === void 0) dirty.set(n.parentNode, time);
-		if (now() - time > 30 | 'ms')
-			look(n), shiny.add(n);
-		else if (cur++ < len && now() - start < 3 && offscreen(n))
+		if (n.parentNode && n.parentNode[prev] === void 0) touch(n.parentNode, time);
+		const at = now();
+		if (at - time > timeToMove)
+			n[prev] === void 0 && spread(n, time), look(n), shiny.add(n);
+		else if (cur++ < len && now() - start < offscreenSkip && offscreen(n))
 			dirty.set(n, time);
 		else
 			moved(n) ? (dirty.set(n, time), spread(n, time)) : shiny.add(n);
-		if (now() - start > (10^'ms')) throw null;
+		"…wait, sometimes it doesn't timeout, and still elements do not move…"
+			"meh, moved is broken for now, because of that motion blur."
+			"will fix later."
+		if (at - start > timeToMove) throw null;
 	}
 
 
 
+	{"Browsers batch layout/style updates, and when needed, open all gates."
+		"This means that interleaving style reads and writes freely is very bad for performance."
+		"Instead, batch functions to be done on read/write and then finish them."}
 	function read(f = void 0) {
 		if (f) finish.r.push(f), finishLater();
 		else if (finish.s !== 1) throw console.error('not in read'), new Error("not in read");
@@ -533,8 +713,10 @@
 	}
 	function finishLater() { if (!finish.b) nextFrame(finish), finish.b = true }
 	function finish() {
+		if (finish.now) return;
+		finish.now = true;
 		try {
-			finish.rects.clear();
+			finish.rects.clear(), alpha.a.clear();
 			let i;
 			while (finish.r.length || finish.w.length) {
 				finish.s = 1;
@@ -543,11 +725,14 @@
 				finish.s = 2;
 				for (i=0; i < finish.w.length; ++i) finish.w[i]();
 				finish.w.length = 0;
-				finish.rects.clear();
+				finish.rects.clear(), alpha.a.clear();
 				if (finish.r.length) document.body.offsetLeft;
 				else anchor.e && anchor();
 			}
-		} catch (err) { log(err); throw err }
-		finally { finish.s = finish.w.length = finish.r.length = 0, finish.b = false }
+		} catch (err) { log('ⴻ', err); throw err }
+		finally {
+			finish.s = finish.w.length = finish.r.length = 0;
+			finish.now = finish.b = false;
+		}
 	}
-}catch(err){console.log(err)}})()
+}catch(err){console.log('ⴻ', err)}})()

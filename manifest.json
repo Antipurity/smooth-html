@@ -6,8 +6,7 @@
 		{
 			"matches": ["<all_urls>"],
 			"all_frames":true,
-			"js":["smooth.js"],
-			"css":["transition.css"]
+			"js":["smooth.js"]
 		}
 	],
 	"description": "Smoothes HTML layout transitions.",
@@ -19,5 +18,5 @@
 	},
 	"name": "Smooth layout changes",
 	"short_name": "Smooth",
-	"version": "0.0.1"
+	"version": "0.0.2"
 }

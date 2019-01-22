@@ -1,3 +1,0 @@
-:not(input):not(button) { transition: all .2s ease-out }
-.ⴻvoid { opacity: 0 !important;  visibility: hidden }
-.ⴻsnap { transition: none !important }

@@ -31,7 +31,7 @@
 	const imageShowIds = new Map, imageInsUndos = new Map;
 	let scheduled = false, start, cur, len;
 	const options = {
-		props:'all', ease:'ease-out', dur:200, delay:0,
+		props:'all', ease:'ease-out', dur:2000, delay:0,
 		ins:{opacity:0}, del:{opacity:0}
 	};
 	let props, ease, dur, delay; "Chosen at style-init time."
@@ -54,11 +54,12 @@
 
 		addEventListener('resize', () => read(() => touch(document.body)), many);
 		addEventListener('transitionstart', evt => {
-			if (evt.target) read(() => touch(evt.target)), finish();
+			const e = evt.target;
+			if (e) read(() => { !offscreen(e) && track(e), touch(e) }), finish();
 		}, many);
 		addEventListener('transitionend', evt => {
-			if (evt.target)
-				read(() => look(evt.target)), write(() => removeTrans(evt.target)), finish();
+			const e = evt.target;
+			if (e) read(() => look(e)), write(() => removeTrans(e)), finish();
 		}, many);
 		addEventListener('transitioncancel', evt => {
 			"When transitions interrupt each other, the second one will now hopefully start midway."
@@ -210,6 +211,7 @@
 	}
 	function layoutChanged(e) {
 		const from = e[prev], to = e[prev] = layout(e);
+		log('layoutChanged');
 		try {
 			if (from === void 0) return false;
 			if (!from !== !to) return true;
@@ -248,20 +250,20 @@
 			}
 			if (from.ix !== null && (pw || ph)) {
 				const p = document.createElement('div');
-				p.style.width = pw + 'px';
-				p.style.height = ph + 'px';
+				p.style.width = (pw || 0) + 'px';
+				p.style.height = (ph || 0) + 'px';
 				const sp = document.createElement('span');
 				sp.style.display = 'inline-block';
-				sp.style.width = (from.ix - from.x) + 'px';
-				sp.style.height = (from.iy - from.y) + 'px';
+				sp.style.width = (from.ix - from.x || 0) + 'px';
+				sp.style.height = (from.iy - from.y || 0) + 'px';
 				p.appendChild(sp);
 				p.appendChild(e);
 				e = p;
 			}
 			e.classList.add('ⴻvoid');
 			const s = e.style;
-			s.left = from.x + 'px', s.top = from.y + 'px';
-			s.width = from.w + 'px', s.height = from.h + 'px';
+			s.left = (from.x || 0) + 'px', s.top = (from.y || 0) + 'px';
+			s.width = (from.w || 0) + 'px', s.height = (from.h || 0) + 'px';
 			s.color = from.c;
 			if (from.a !== 1) s.opacity = from.a;
 			snap(e, true);
@@ -292,48 +294,84 @@
 		}
 		return e;
 	}
-	function blur(x,y) {
-		"isn't this in write though?…"
-		const id = 'ⴻ'+x+','+y;
+	function blur(x,y,w,h) {
+		if (!x && !y) return null;
+		write();
+		const id = `ⴻx${x}y${y}w${w}h${h}`;
 		let e = document.getElementById(id);
 		if (!e) {
 			const b = svg('feGaussianBlur');
 			b.setAttribute('in', 'SourceGraphic');
 			b.setAttribute('edgeMode', 'none');
+			b.setAttribute('primitiveUnits', 'objectBoundingBox');
 			b.setStdDeviation(x,y);
 			e = svg('filter');
 			e.id = id;
+			e.x.baseVal.newValueSpecifiedUnits(2, Math.floor(-(x/w)*100));
+			e.y.baseVal.newValueSpecifiedUnits(2, Math.floor(-(y/h)*100));
+			e.width.baseVal.newValueSpecifiedUnits(2, Math.ceil((1 + 2*x/w)*100));
+			e.height.baseVal.newValueSpecifiedUnits(2, Math.ceil((1 + 2*y/h)*100));
 			e.appendChild(b);
 			defs().appendChild(e);
 		}
-		e.setAttribute('refs', (e.getAttribute('refs') || 0) + 1);
+		e.refs = (e.refs || 0) + 1;
 		return id;
 	}
 	function blurDispose(id) {
-		const e = document.getElementById(id);
-		if (!e) return; "decrement ref-count, remove element if 0"
-		e.setAttribute('refs', (e.getAttribute('refs') || 0) - 1);
-		if (!e.getAttribute('refs')) e.remove();
+		write(); "decrement ref-count, remove element if 0."
+		const e = document.getElementById(id); "presumably, does not cause reflow."
+		if (!e) return;
+		e.refs = (e.refs || 1) - 1;
+		if (!e.refs) e.remove();
 	}
 	function motion(e, from, to) {
-		const x1 = from.ax - to.ax, x2 = from.ax+from.w - (to.ax+to.w);
-		const y1 = from.ay - to.ay, y2 = from.ay+from.h - (to.ay+to.h);
-		const x = (x1>0) === (x2>0) ? Math.floor(Math.min(Math.abs(x1), Math.abs(x2))) : 0;
-		const y = (y1>0) === (y2>0) ? Math.floor(Math.min(Math.abs(y1), Math.abs(y2))) : 0;
+		if (!from) return layoutDiscard(to), true;
+		if (!to) return false;
+		const x1 = from.ax - to.ax, x2 = x1 + from.w - to.w;
+		const y1 = from.ay - to.ay, y2 = y1 + from.h - to.h;
+		const x = (x1>0) === (x2>0) ? Math.min(Math.abs(x1), Math.abs(x2)) : 0;
+		const y = (y1>0) === (y2>0) ? Math.min(Math.abs(y1), Math.abs(y2)) : 0;
+		const w = to.w, h = to.h;
+		layoutDiscard(to);
 		read();
-		if (!x || !y || x>5 && y>5) return e.style.filter && write(() => {
-			removeProperty(e, 'filter');
-		}), false;
-		const pre = getComputedStyle(e).filter;
+		log(x,y,w,h)
+		if (!w || !h || !x && !y || x>5 && y>5) return false;
+		let pre = getComputedStyle(e).filter;
 		write(() => {
-			const id = blur(x,y);
+			const id = blur(Math.floor(x), Math.floor(y), w, h);
+			track.m.set(e, id);
 			if (!id) return;
-			setTimeout(blurDispose, 100, id);
 			const add = `url(#${CSS.escape(id)})`;
+			if (pre) pre = pre.replace(/(?: |)url\("#(?:ⴻ|%E2%B4%BB)[^]+/, '');
+			"Why are filters not applied/found, making elems invisible?"
+				"Seriously."
 			if (!pre || pre === 'none') e.style.filter = add;
 			else e.style.filter = pre+' '+add;
 		});
 		return true;
+	}
+	function track(e) {
+		if (!track.m) track.m = new Map, track.start = 0;
+		track.m.set(e, null);
+		if (!scheduled) read(clean), scheduled = true;
+	}
+	function trackAll() {
+		if (!track.m) track.m = new Map;
+		read();
+		track.start = now();
+		try { track.m.forEach(trackOne) }
+		catch (err) { if (err !== null) throw log('ⴻ', err), err }
+	}
+	function trackOne(id, e) {
+		track.m.delete(e);
+		if (now() - track.start > 10)
+			throw e.style && e.style.filter && write(() => removeProperty(e, 'filter')), null;
+		"Why do e[prev] and layout(e) return the same readings. Except when they don't (in which case, layout change is read, not visual change… except when it's visual…)."
+			"Do we have to integrate with clean more closely, maybe call trackAll after cleaning, with all froms remembered?…"
+		if (!motion(e, e[prev], layout(e)))
+			e.style && e.style.filter && write(() => removeProperty(e, 'filter'));
+		"Why is it still possible to not clear style but clear the filter element…"
+		id && write(() => blurDispose(id));
 	}
 
 
@@ -391,10 +429,10 @@
 			const e = document.createElement('div');
 			const s = e.style;
 			s.border = '3px solid ' + color;
-			s.left = from.x + 'px';
-			s.top = from.y + 'px';
-			s.width = from.w + 'px';
-			s.height = from.h + 'px';
+			s.left = (from.x || 0) + 'px';
+			s.top = (from.y || 0) + 'px';
+			s.width = (from.w || 0) + 'px';
+			s.height = (from.h || 0) + 'px';
 			s.borderRadius = '3px';
 			s.boxSizing = 'border-box';
 			document.documentElement.append(e);
@@ -565,8 +603,8 @@
 			const s = getComputedStyle(e);
 			if (s.display.indexOf('block')<0) return false;
 			if (!intoSameSpace(from, to.p)) return false;
-			const m = motion(e, from, to);
-			if ((e.style.transform || 'none') !== 'none') return m;
+			//const m = motion(e, from, to); "motion blur should be moved out of here, removing this"
+			//if ((e.style.transform || 'none') !== 'none') return m; "and this"
 			if ((s.transform || 'none') !== 'none') return false;
 			sx = from.w / to.w, sy = from.h / to.h;
 			dx = from.ox - to.ox, dy = from.oy - to.oy;
@@ -608,6 +646,7 @@
 	function look(e, discard = true) {
 		if (!e) return;
 		const from = e[prev], to = e[prev] = layout(e);
+		log('look');
 		if (from === void 0) return void touch(e);
 		if (!from)
 			return void write(() => {
@@ -645,6 +684,7 @@
 	function clean() {
 		read();
 		anchor.e && anchor(anchor.e);
+		trackAll();
 		start = now(), cur = 0, len = Math.min(dirty.size, 24);
 		"We also limit the number of offscreen checks to len."
 		if (start - lastDirty > 1000) timeToMove = 50, offscreenSkip = 20;
@@ -654,30 +694,27 @@
 		try { dirty.forEach(cleanOne) }
 		catch (err) { if (err !== null) throw log('ⴻ', err), err }
 		shiny.clear();
-		lastDirty = start;
-		if (dirty.size) nextFrame(() => read(clean)), scheduled = true;
+		if (dirty.size || track.m.size) nextFrame(() => read(clean)), scheduled = true;
 		else scheduled = false;
+		lastDirty = now();
 	}
-	function offscreen(n) {
-		const r = clientRect(n);
+	function offscreen(e) {
+		const r = clientRect(e);
 		if (!r) return false;
 		if (r.right <= 0 || r.bottom <= 0) return true;
 		if (r.left >= innerWidth || r.top >= innerHeight) return true;
 		return false;
 	}
-	function cleanOne(time, n) { "(keys/values are swapped for map's forEach for some reason.)"
-		dirty.delete(n);
-		if (n.parentNode && n.parentNode[prev] === void 0) touch(n.parentNode, time);
+	function cleanOne(time, e) { "(keys/values are swapped for map's forEach for some reason.)"
+		dirty.delete(e);
+		if (e.parentNode && e.parentNode[prev] === void 0) touch(e.parentNode, time);
 		const at = now();
 		if (at - time > timeToMove)
-			n[prev] === void 0 && spread(n, time), look(n), shiny.add(n);
-		else if (cur++ < len && now() - start < offscreenSkip && offscreen(n))
-			dirty.set(n, time);
+			e[prev] === void 0 && spread(e, time), look(e), shiny.add(e);
+		else if (cur++ < len && now() - start < offscreenSkip && offscreen(e))
+			dirty.set(e, time);
 		else
-			moved(n) ? (dirty.set(n, time), spread(n, time)) : shiny.add(n);
-		"…wait, sometimes it doesn't timeout, and still elements do not move…"
-			"meh, moved is broken for now, because of that motion blur."
-			"will fix later."
+			moved(e) ? (dirty.set(e, time), spread(e, time)) : shiny.add(e);
 		if (at - start > timeToMove) throw null;
 	}
 
@@ -720,13 +757,15 @@
 			let i;
 			while (finish.r.length || finish.w.length) {
 				finish.s = 1;
+				log('r')
 				for (i=0; i < finish.r.length; ++i) finish.r[i]();
 				finish.r.length = 0;
 				finish.s = 2;
+				log('w')
 				for (i=0; i < finish.w.length; ++i) finish.w[i]();
 				finish.w.length = 0;
 				finish.rects.clear(), alpha.a.clear();
-				if (finish.r.length) document.body.offsetLeft;
+				if (finish.r.length) document.body.offsetLeft, log('anew');
 				else anchor.e && anchor();
 			}
 		} catch (err) { log('ⴻ', err); throw err }
